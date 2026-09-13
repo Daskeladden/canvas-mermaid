@@ -324,16 +324,55 @@ flowchart TB
                       spec))
     (should (>= (plist-get (nthcdr 4 (car (last spec))) :pos) 100))))
 
+;;;; Class diagrams
+
+(ert-deftest canvas-mermaid-a-class-diagram-is-read-as-boxes-of-members ()
+  ;; GIVEN a class diagram with a block of members, a member written on a
+  ;;       line of its own, an annotation and a relation
+  ;; WHEN it is read
+  ;; THEN it is a graph whose boxes hold their members as rows, in the
+  ;;      order they were written, and the annotation is passed by
+  (pcase-let ((`(,kind . ,spec)
+               (canvas-mermaid-test--read
+                (concat "classDiagram\n"
+                        "    class Animal {\n"
+                        "        +int age\n"
+                        "        +isMammal() bool\n"
+                        "    }\n"
+                        "    <<interface>> Animal\n"
+                        "    Animal : +String name\n"
+                        "    Animal <|-- Duck\n"))))
+    (should (eq kind 'graph))
+    (should (equal (plist-get (cdr (assoc "Animal" (plist-get spec :nodes))) :rows)
+                   '("+int age" "+isMammal() bool" "+String name")))
+    (should (member "Duck" (mapcar #'car (plist-get spec :nodes))))))
+
+(ert-deftest canvas-mermaid-a-relation-of-a-class-diagram-points-the-right-way ()
+  ;; GIVEN relations whose head is on the left and on the right, one of
+  ;;       them labelled and one with cardinalities
+  ;; WHEN they are read
+  ;; THEN each edge runs towards the head, the label is kept, and the
+  ;;      cardinalities are passed by
+  (pcase-let ((`(,_ . ,spec)
+               (canvas-mermaid-test--read
+                (concat "classDiagram\n"
+                        "    Animal <|-- Duck\n"
+                        "    Duck --> Pond : swims in\n"
+                        "    Owner \"1\" o-- \"many\" Duck\n"))))
+    (should (equal (canvas-mermaid-test--edges spec)
+                   '(("Duck" "Animal" nil) ("Duck" "Pond" "swims in") ("Owner" "Duck" nil))))))
+
 ;;;; What has no layout yet
 
 (ert-deftest canvas-mermaid-a-diagram-without-a-layout-says-so ()
-  ;; GIVEN a class diagram, a word mermaid does not know, and texts with
-  ;;       no diagram at all
+  ;; GIVEN an entity relationship diagram, a word mermaid does not know,
+  ;;       and texts with no diagram at all
   ;; WHEN each is read
-  ;; THEN the class diagram is a user error naming it, the others are
+  ;; THEN the entity relationship diagram is a user error naming it, the
+  ;;      others are
   ;;      errors, AND no picture is drawn wrong
-  (let ((err (should-error (canvas-mermaid-test--read "classDiagram\n  A <|-- B\n") :type 'user-error)))
-    (should (string-search "classDiagram" (error-message-string err))))
+  (let ((err (should-error (canvas-mermaid-test--read "erDiagram\n  A ||--o{ B : has\n") :type 'user-error)))
+    (should (string-search "erDiagram" (error-message-string err))))
   (should-error (canvas-mermaid-test--read "nonsense\n  A --> B\n"))
   (should-error (canvas-mermaid-test--read ""))
   (should-error (canvas-mermaid-test--read "%% only a comment\n")))

@@ -89,11 +89,12 @@ nil for none."
 (defconst canvas-mermaid--layouts
   '(("flowchart" . flowchart) ("graph" . flowchart)
     ("stateDiagram" . state) ("stateDiagram-v2" . state)
-    ("mindmap" . mindmap) ("sequenceDiagram" . sequence))
+    ("mindmap" . mindmap) ("sequenceDiagram" . sequence)
+    ("classDiagram" . class) ("classDiagram-v2" . class))
   "The diagrams a layout draws, by the word that opens them.")
 
 (defconst canvas-mermaid--without-layout
-  '("classDiagram" "classDiagram-v2" "erDiagram" "gantt" "pie" "journey"
+  '("erDiagram" "gantt" "pie" "journey"
     "gitGraph" "requirementDiagram" "quadrantChart" "timeline" "zenuml" "sankey-beta"
     "xychart-beta" "block-beta" "packet-beta" "kanban" "architecture-beta" "radar-beta"
     "treemap-beta" "C4Context" "C4Container" "C4Component" "C4Dynamic" "C4Deployment")
@@ -122,7 +123,84 @@ canvas-mindmap.  Each node is placed where it is first written."
       ('flowchart (cons 'graph (canvas-mermaid--flowchart header (cdr lines) (or title "flowchart"))))
       ('state (cons 'graph (canvas-mermaid--states (cdr lines) (or title "state diagram"))))
       ('mindmap (cons 'mindmap (canvas-mermaid--mindmap (cdr lines))))
-      ('sequence (cons 'sequence (canvas-mermaid--sequence (cdr lines)))))))
+      ('sequence (cons 'sequence (canvas-mermaid--sequence (cdr lines))))
+      ('class (cons 'graph (canvas-mermaid--classes (cdr lines) (or title "class diagram")))))))
+
+;;;; Class diagrams
+
+(defconst canvas-mermaid--class-skip-re
+  (concat "\\`\\(?:direction\\|namespace\\|note\\|click\\|style\\|classDef\\|cssClass"
+          "\\|link\\|callback\\|accTitle\\|accDescr\\|title\\|<<\\)")
+  "A statement of a class diagram that draws nothing yet.")
+
+(defconst canvas-mermaid--class-open-re
+  "\\`class[ \t]+\\([^ \t{:]+\\)\\(?:\\[\"\\([^]\"]*\\)\"]\\)?[ \t]*\\({\\)?[ \t]*\\'"
+  "A class line: its name, a label in brackets, and a brace that opens a
+block of members.")
+
+(defconst canvas-mermaid--class-member-re
+  "\\`\\([^ \t:]+\\)[ \t]*:[ \t]*\\(.+\\)\\'"
+  "A member written on a line of its own: the class, then the member.")
+
+(defconst canvas-mermaid--class-relation-re
+  (concat "\\`\\([^ \t\"]+\\)[ \t]*\\(?:\"[^\"]*\"[ \t]*\\)?"
+          "\\([<*o|]*\\(?:--\\|\\.\\.\\)[>*o|]*\\)"
+          "[ \t]*\\(?:\"[^\"]*\"[ \t]*\\)?\\([^ \t:\"]+\\)[ \t]*\\(?::[ \t]*\\(.*\\)\\)?\\'")
+  "A relation between two classes: the one on the left, the marks between
+them, the one on the right, and the label after a colon.  A cardinality
+in double quotes on either side is passed by.")
+
+(defun canvas-mermaid--class-head-left-p (marks)
+  "Whether MARKS, the middle of a relation, point at the class on the
+left, as `<|--' and `<--' do.  A diamond, the `o' of an aggregation or
+the `*' of a composition, marks the whole it belongs to rather than a
+way to read the line, so it leaves the order as it was written."
+  (string-match-p "\\`[<|]" marks))
+
+(defun canvas-mermaid--class-relation (draft text pos)
+  "Note in DRAFT the relation TEXT at POS holds; whether it held one.
+The edge runs towards the head of the arrow."
+  (when (string-match canvas-mermaid--class-relation-re text)
+    (let ((left (match-string 1 text))
+          (marks (match-string 2 text))
+          (right (match-string 3 text))
+          (label (match-string 4 text)))
+      (if (canvas-mermaid--class-head-left-p marks)
+          (canvas-graph-draft-edge draft right left (and label (string-trim label)) pos)
+        (canvas-graph-draft-edge draft left right (and label (string-trim label)) pos))
+      t)))
+
+(defun canvas-mermaid--class-line (draft text pos inside)
+  "Read TEXT at POS of a class diagram into DRAFT, INSIDE being the class
+whose block is open, or nil; the class whose block stays open."
+  (cond
+   ((and inside (string-match-p "\\`}" text)) nil)
+   (inside (canvas-graph-draft-row draft inside text pos) inside)
+   ((string-match-p canvas-mermaid--class-skip-re text) nil)
+   ((string-match canvas-mermaid--class-open-re text)
+    (let ((name (match-string 1 text))
+          (label (match-string 2 text))
+          (block (match-string 3 text)))
+      (canvas-graph-draft-node draft name (and label (string-trim label)) pos)
+      (and block name)))
+   ((canvas-mermaid--class-relation draft text pos) nil)
+   ((string-match canvas-mermaid--class-member-re text)
+    (let ((name (match-string 1 text))
+          (member (match-string 2 text)))
+      (canvas-graph-draft-row draft name (string-trim member) pos))
+    nil)))
+
+(defun canvas-mermaid--classes (lines name)
+  "The spec of the class diagram called NAME, LINES its body.  A class is
+a box, its members are the rows of that box, and a relation is an arrow
+towards the head it is drawn with."
+  (let ((draft (canvas-graph-draft-create))
+        (inside nil))
+    (pcase-dolist (`(,raw . ,pos) lines)
+      (let ((text (string-trim raw)))
+        (unless (string-empty-p text)
+          (setq inside (canvas-mermaid--class-line draft text pos inside)))))
+    (canvas-graph-draft-spec draft name)))
 
 ;;;; Sequence diagrams
 
