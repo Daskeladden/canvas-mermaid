@@ -267,16 +267,73 @@ flowchart TB
   ;; THEN that is an error, not a map missing a tree
   (should-error (canvas-mermaid-test--read "mindmap\n  One\n  Two\n")))
 
+;;;; Sequence diagrams
+
+(ert-deftest canvas-mermaid-a-sequence-diagram-is-read-as-parties-and-messages ()
+  ;; GIVEN a sequence diagram with a participant, an actor, a participant
+  ;;       named with `as', and messages of the arrow forms mermaid writes
+  ;; WHEN it is read
+  ;; THEN it is a sequence spec: the parties in the order they were named,
+  ;;      each with its label, and the messages in order, a reply dashed
+  (pcase-let ((`(,kind . ,spec)
+               (canvas-mermaid-test--read
+                (concat "sequenceDiagram\n"
+                        "    participant host as Host\n"
+                        "    actor toe\n"
+                        "    host->>toe: open socket\n"
+                        "    toe-->>host: ready\n"
+                        "    toe->toe: start timer\n"))))
+    (should (eq kind 'sequence))
+    (should (equal (mapcar (lambda (line) (seq-take line 3))
+                           (cl-remove-if-not (lambda (line) (eq (car line) 'party)) spec))
+                   '((party "host" "Host") (party "toe" "toe"))))
+    (should (equal (mapcar (lambda (line) (list (nth 1 line) (nth 2 line) (nth 3 line) (plist-get (nthcdr 4 line) :dashed)))
+                           (cl-remove-if-not (lambda (line) (eq (car line) 'message)) spec))
+                   '(("host" "toe" "open socket" nil)
+                     ("toe" "host" "ready" t)
+                     ("toe" "toe" "start timer" nil))))))
+
+(ert-deftest canvas-mermaid-a-party-a-message-names-first-is-named-there ()
+  ;; GIVEN a sequence diagram that names no participant of its own
+  ;; WHEN it is read
+  ;; THEN each party is named where a message first uses it, in that order,
+  ;;      AND a statement that draws nothing yet is passed by
+  (pcase-let ((`(,_ . ,spec)
+               (canvas-mermaid-test--read
+                (concat "sequenceDiagram\n"
+                        "    autonumber\n"
+                        "    B->>A: first\n"
+                        "    Note over A,B: a note\n"
+                        "    loop every minute\n"
+                        "        A-)C: tick\n"
+                        "    end\n"))))
+    (should (equal (mapcar (lambda (line) (seq-take line 3))
+                           (cl-remove-if-not (lambda (line) (eq (car line) 'party)) spec))
+                   '((party "B" "B") (party "A" "A") (party "C" "C"))))
+    (should (equal (mapcar (lambda (line) (nth 3 line))
+                           (cl-remove-if-not (lambda (line) (eq (car line) 'message)) spec))
+                   '("first" "tick")))))
+
+(ert-deftest canvas-mermaid-a-message-of-a-sequence-knows-where-it-was-read ()
+  ;; GIVEN a sequence diagram read from a place in a buffer
+  ;; WHEN its lines are read
+  ;; THEN each party and each message holds the position it was read from,
+  ;;      so that the picture can go back to it
+  (pcase-let ((`(,_ . ,spec) (canvas-mermaid-read "sequenceDiagram\n    A->>B: hi\n" 100)))
+    (should (cl-every (lambda (line) (integerp (plist-get (nthcdr (if (eq (car line) 'party) 3 4) line) :pos)))
+                      spec))
+    (should (>= (plist-get (nthcdr 4 (car (last spec))) :pos) 100))))
+
 ;;;; What has no layout yet
 
 (ert-deftest canvas-mermaid-a-diagram-without-a-layout-says-so ()
-  ;; GIVEN a sequence diagram, a word mermaid does not know, and texts with
+  ;; GIVEN a class diagram, a word mermaid does not know, and texts with
   ;;       no diagram at all
   ;; WHEN each is read
-  ;; THEN the sequence diagram is a user error naming it, the others are
+  ;; THEN the class diagram is a user error naming it, the others are
   ;;      errors, AND no picture is drawn wrong
-  (let ((err (should-error (canvas-mermaid-test--read "sequenceDiagram\n  A->>B: hi\n") :type 'user-error)))
-    (should (string-search "sequenceDiagram" (error-message-string err))))
+  (let ((err (should-error (canvas-mermaid-test--read "classDiagram\n  A <|-- B\n") :type 'user-error)))
+    (should (string-search "classDiagram" (error-message-string err))))
   (should-error (canvas-mermaid-test--read "nonsense\n  A --> B\n"))
   (should-error (canvas-mermaid-test--read ""))
   (should-error (canvas-mermaid-test--read "%% only a comment\n")))

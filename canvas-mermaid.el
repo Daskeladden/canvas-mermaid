@@ -4,7 +4,7 @@
 
 ;; Author: Daskeladden
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "32.0.50") (canvas-graph "0.1.0") (canvas-mindmap "0.1.0"))
+;; Package-Requires: ((emacs "32.0.50") (canvas-graph "0.1.0") (canvas-mindmap "0.1.0") (canvas-sequence "0.1.0"))
 ;; Keywords: multimedia, tools, convenience
 ;; URL: https://github.com/Daskeladden/canvas-mermaid
 
@@ -40,6 +40,7 @@
 
 (require 'cl-lib)
 (require 'canvas-graph)
+(require 'canvas-sequence)
 (require 'canvas-mindmap)
 
 ;;;; The text
@@ -88,11 +89,11 @@ nil for none."
 (defconst canvas-mermaid--layouts
   '(("flowchart" . flowchart) ("graph" . flowchart)
     ("stateDiagram" . state) ("stateDiagram-v2" . state)
-    ("mindmap" . mindmap))
+    ("mindmap" . mindmap) ("sequenceDiagram" . sequence))
   "The diagrams a layout draws, by the word that opens them.")
 
 (defconst canvas-mermaid--without-layout
-  '("sequenceDiagram" "classDiagram" "classDiagram-v2" "erDiagram" "gantt" "pie" "journey"
+  '("classDiagram" "classDiagram-v2" "erDiagram" "gantt" "pie" "journey"
     "gitGraph" "requirementDiagram" "quadrantChart" "timeline" "zenuml" "sankey-beta"
     "xychart-beta" "block-beta" "packet-beta" "kanban" "architecture-beta" "radar-beta"
     "treemap-beta" "C4Context" "C4Container" "C4Component" "C4Dynamic" "C4Deployment")
@@ -120,7 +121,83 @@ canvas-mindmap.  Each node is placed where it is first written."
     (pcase (canvas-mermaid--type (canvas-mermaid--word header))
       ('flowchart (cons 'graph (canvas-mermaid--flowchart header (cdr lines) (or title "flowchart"))))
       ('state (cons 'graph (canvas-mermaid--states (cdr lines) (or title "state diagram"))))
-      ('mindmap (cons 'mindmap (canvas-mermaid--mindmap (cdr lines)))))))
+      ('mindmap (cons 'mindmap (canvas-mermaid--mindmap (cdr lines))))
+      ('sequence (cons 'sequence (canvas-mermaid--sequence (cdr lines)))))))
+
+;;;; Sequence diagrams
+
+(defconst canvas-mermaid--sequence-skip-re
+  (concat "\\`\\(?:autonumber\\|activate\\|deactivate\\|[Nn]ote\\|loop\\|alt\\|else\\|opt"
+          "\\|par\\|and\\|critical\\|option\\|break\\|rect\\|end\\|box\\|link\\|links"
+          "\\|create\\|destroy\\|accTitle\\|accDescr\\|title\\)\\(?:[ \t:]\\|\\'\\)")
+  "A statement of a sequence diagram that draws nothing yet: a note, a
+block such as loop or alt, an activation, or a line that only numbers or
+titles the diagram.")
+
+(defconst canvas-mermaid--party-re
+  "\\`\\(?:participant\\|actor\\)[ \t]+\\([^ \t]+\\)\\(?:[ \t]+as[ \t]+\\(.+\\)\\)?\\'"
+  "A line that names a party: its name, and the label after `as'.")
+
+(defconst canvas-mermaid--arrow-re
+  "\\(-\\{1,2\\}\\)\\(?:>>\\|>\\|)\\|x\\)"
+  "An arrow of a message: one or two dashes, then its head.  Two dashes
+draw a dashed line, as mermaid draws a reply.")
+
+(defconst canvas-mermaid--message-re
+  (concat "\\`\\([^-+:]+?\\)[ \t]*" canvas-mermaid--arrow-re "[ \t]*\\([^:]+?\\)[ \t]*:[ \t]*\\(.*\\)\\'")
+  "A message: the party it comes from, its arrow, the party it goes to,
+and its text.")
+
+(defun canvas-mermaid--sequence-party (text pos)
+  "The party line that TEXT at POS names, or nil.  Every group is taken
+before anything else runs, because `string-trim' matches on its own and
+would leave the match data of another search behind."
+  (when (string-match canvas-mermaid--party-re text)
+    (let ((name (match-string 1 text))
+          (label (match-string 2 text)))
+      (list 'party name (string-trim (or label name)) :pos pos))))
+
+(defun canvas-mermaid--sequence-message (text pos)
+  "The message line that TEXT at POS holds, or nil.  A party is named
+plainly here; mermaid's +, - and : marks on a name are for activations,
+which nothing draws yet."
+  (when (string-match canvas-mermaid--message-re text)
+    (let ((from (match-string 1 text))
+          (dashes (match-string 2 text))
+          (to (match-string 3 text))
+          (label (match-string 4 text)))
+      (list 'message (string-trim from) (string-trim to) (string-trim label)
+            :dashed (equal dashes "--") :pos pos))))
+
+(defun canvas-mermaid--named-parties (lines)
+  "The parties LINES name in messages but no party line names, as (NAME .
+POS), in the order they first appear, POS being where that message was
+read from."
+  (let ((named (delq nil (mapcar (lambda (line) (nth 1 line))
+                                 (cl-remove-if-not (lambda (line) (eq (car line) 'party)) lines))))
+        found)
+    (dolist (line lines (nreverse found))
+      (when (eq (car line) 'message)
+        (let ((pos (plist-get (nthcdr 4 line) :pos)))
+          (dolist (name (list (nth 1 line) (nth 2 line)))
+            (unless (or (member name named) (assoc name found))
+              (push (cons name pos) found))))))))
+
+(defun canvas-mermaid--sequence (lines)
+  "LINES of a sequence diagram as a spec for canvas-sequence.
+A party a message names first is named where it first appears.  A
+statement that draws nothing yet is passed by."
+  (let (out)
+    (pcase-dolist (`(,raw . ,pos) lines)
+      (let ((text (string-trim raw)))
+        (unless (string-match-p canvas-mermaid--sequence-skip-re text)
+          (when-let* ((line (or (canvas-mermaid--sequence-party text pos)
+                                (canvas-mermaid--sequence-message text pos))))
+            (push line out)))))
+    (setq out (nreverse out))
+    (append (mapcar (pcase-lambda (`(,name . ,pos)) (list 'party name name :pos pos))
+                    (canvas-mermaid--named-parties out))
+            out)))
 
 ;;;; Flowcharts
 
@@ -449,7 +526,8 @@ spec of KIND, for following it; see `canvas-diagram-region-reader'."
   "Draw what READ finds in BUFFER with the layout for KIND, following BUFFER."
   (pcase kind
     ('graph (canvas-graph-follow buffer read "*canvas-mermaid*"))
-    ('mindmap (canvas-mindmap-follow buffer read "*canvas-mermaid*"))))
+    ('mindmap (canvas-mindmap-follow buffer read "*canvas-mermaid*"))
+    ('sequence (canvas-sequence-follow buffer read "*canvas-mermaid*"))))
 
 (defun canvas-mermaid--show-region (region)
   "Draw the mermaid diagram in REGION of the current buffer, following it."
@@ -487,7 +565,8 @@ works in batch."
                   (car (canvas-mermaid--regions-or-error (file-name-nondirectory file)))))))
     (pcase kind
       ('graph (canvas-graph-export spec out))
-      ('mindmap (canvas-mindmap-export spec out)))))
+      ('mindmap (canvas-mindmap-export spec out))
+      ('sequence (canvas-sequence-export spec out)))))
 
 ;;;; Demo
 
