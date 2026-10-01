@@ -4,7 +4,7 @@
 
 ;; Author: Daskeladden
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "32.0.50") (canvas-graph "0.1.0") (canvas-mindmap "0.1.0") (canvas-sequence "0.1.0"))
+;; Package-Requires: ((emacs "32.0.50") (canvas-diagram "0.1.0") (canvas-graph "0.1.0") (canvas-mindmap "0.1.0") (canvas-sequence "0.1.0"))
 ;; Keywords: multimedia, tools, convenience
 ;; URL: https://github.com/Daskeladden/canvas-mermaid
 
@@ -39,6 +39,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'canvas-diagram-reader)
 (require 'canvas-graph)
 (require 'canvas-sequence)
 (require 'canvas-mindmap)
@@ -573,45 +574,13 @@ mermaid blocks, else all of it when it is one."
                  (canvas-mermaid--diagram-p (buffer-substring-no-properties (point-min) (point-max))))
              (list (cons (point-min) (point-max)))))))
 
-(defun canvas-mermaid--regions-or-error (&optional name)
-  "The mermaid diagrams of the current buffer; none is a user error,
-naming the buffer, or NAME."
-  (or (canvas-mermaid--regions)
-      (user-error "canvas-mermaid: no mermaid diagram in %s" (or name (buffer-name)))))
-
-(defun canvas-mermaid--read-region (region)
-  "The diagram in REGION, (START . END) of the current buffer, as
-`canvas-mermaid-read' reads it, placed in the buffer."
-  (canvas-mermaid-read (buffer-substring-no-properties (car region) (cdr region)) (car region)))
-
-(defun canvas-mermaid--spec-of (region kind)
-  "The spec of the diagram in REGION of the current buffer, of KIND; a
-diagram of another kind is a user error."
-  (pcase-let ((`(,found . ,spec) (canvas-mermaid--read-region region)))
-    (unless (eq found kind)
-      (user-error "canvas-mermaid: the diagram is a %s now; draw it again to see it" found))
-    spec))
-
-(defun canvas-mermaid--reader (marker kind)
-  "A function reading, from a buffer, the mermaid diagram at MARKER as a
-spec of KIND, for following it; see `canvas-diagram-region-reader'."
-  (canvas-diagram-region-reader marker #'canvas-mermaid--regions
-                                (lambda (region) (canvas-mermaid--spec-of region kind))))
+(defconst canvas-mermaid-reader
+  (canvas-diagram-reader-create :package "canvas-mermaid" :language "mermaid"
+                                :regions #'canvas-mermaid--regions
+                                :read #'canvas-mermaid-read)
+  "The reader of mermaid, for the functions of canvas-diagram-reader.")
 
 ;;;; Showing and exporting
-
-(defun canvas-mermaid--follow (kind buffer read)
-  "Draw what READ finds in BUFFER with the layout for KIND, following BUFFER."
-  (pcase kind
-    ('graph (canvas-graph-follow buffer read "*canvas-mermaid*"))
-    ('mindmap (canvas-mindmap-follow buffer read "*canvas-mermaid*"))
-    ('sequence (canvas-sequence-follow buffer read "*canvas-mermaid*"))))
-
-(defun canvas-mermaid--show-region (region)
-  "Draw the mermaid diagram in REGION of the current buffer, following it."
-  (let ((kind (car (canvas-mermaid--read-region region))))
-    (canvas-mermaid--follow kind (current-buffer)
-                            (canvas-mermaid--reader (copy-marker (car region)) kind))))
 
 ;;;###autoload
 (defun canvas-mermaid-show ()
@@ -621,14 +590,13 @@ holds mermaid in markdown fences or org source blocks; with a single
 diagram, point may be anywhere.  The drawing follows the buffer: it is
 drawn again once typing there pauses."
   (interactive)
-  (canvas-mermaid--show-region (canvas-diagram-region-at (canvas-mermaid--regions-or-error) (point))))
+  (canvas-diagram-reader-show canvas-mermaid-reader))
 
 ;;;###autoload
 (defun canvas-mermaid-show-file (file)
   "Draw the first mermaid diagram of FILE, following the buffer visiting it."
   (interactive "fMermaid, markdown or org file: ")
-  (with-current-buffer (find-file-noselect file)
-    (canvas-mermaid--show-region (car (canvas-mermaid--regions-or-error)))))
+  (canvas-diagram-reader-show-file canvas-mermaid-reader file))
 
 ;;;###autoload
 (defun canvas-mermaid-export (file out)
@@ -636,15 +604,7 @@ drawn again once typing there pauses."
 by its name, and return OUT.  FILE is a mermaid file, or a markdown or
 org file with mermaid blocks.  No buffer or frame is needed, so this
 works in batch."
-  (pcase-let ((`(,kind . ,spec)
-               (with-temp-buffer
-                 (insert-file-contents file)
-                 (canvas-mermaid--read-region
-                  (car (canvas-mermaid--regions-or-error (file-name-nondirectory file)))))))
-    (pcase kind
-      ('graph (canvas-graph-export spec out))
-      ('mindmap (canvas-mindmap-export spec out))
-      ('sequence (canvas-sequence-export spec out)))))
+  (canvas-diagram-reader-export canvas-mermaid-reader file out))
 
 ;;;; Demo
 
@@ -668,14 +628,7 @@ flowchart TD
 (defun canvas-mermaid-demo ()
   "Show a small flowchart, with its mermaid in a buffer to edit and watch."
   (interactive)
-  (with-current-buffer (get-buffer-create "*canvas-mermaid demo*")
-    (erase-buffer)
-    (insert canvas-mermaid--demo)
-    (when (fboundp 'mermaid-mode)
-      (mermaid-mode))
-    (goto-char (point-min))
-    (switch-to-buffer (current-buffer))
-    (canvas-mermaid-show)))
+  (canvas-diagram-reader-demo canvas-mermaid-reader canvas-mermaid--demo 'mermaid-mode))
 
 (provide 'canvas-mermaid)
 ;;; canvas-mermaid.el ends here

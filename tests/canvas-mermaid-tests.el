@@ -443,7 +443,7 @@ flowchart TB
   (with-temp-buffer
     (insert canvas-mermaid-test--markdown)
     (let* ((region (car (canvas-mermaid--regions)))
-           (read (canvas-mermaid--reader (copy-marker (car region)) 'graph)))
+           (read (canvas-diagram-reader-follower canvas-mermaid-reader (copy-marker (car region)) 'graph)))
       (goto-char (point-min))
       (insert "Some words above.\n\n")
       (should (equal (canvas-mermaid-test--edges (funcall read (current-buffer))) '(("A" "B" nil))))
