@@ -281,9 +281,15 @@ statement that draws nothing yet is passed by."
 ;;;; Flowcharts
 
 (defconst canvas-mermaid--skip-re
-  (concat "\\`\\(?:classDef\\|class\\|style\\|linkStyle\\|click\\|direction"
-          "\\|subgraph\\|end\\|accTitle\\|accDescr\\|title\\)\\(?:[ \t:]\\|\\'\\)")
+  (concat "\\`\\(?:classDef\\|class\\|linkStyle\\|click\\|direction"
+          "\\|accTitle\\|accDescr\\|title\\)\\(?:[ \t:]\\|\\'\\)")
   "A flowchart statement that draws nothing.")
+
+(defconst canvas-mermaid--subgraph-re "\\`subgraph\\(?:[ \t]+\\(.*\\)\\)?\\'"
+  "A statement that opens a subgraph, and what names it.")
+
+(defconst canvas-mermaid--style-re "\\`style[ \t]+\\([^ \t]+\\)[ \t]+\\(.*\\)\\'"
+  "A style statement: the subgraph or node it styles, and its properties.")
 
 (defconst canvas-mermaid--header-re
   "\\`[ \t]*\\(?:flowchart\\|graph\\)\\(?:[ \t]+\\(?:TB\\|TD\\|BT\\|RL\\|LR\\)\\)?[ \t]*;?"
@@ -422,16 +428,108 @@ POS, and one back again when BOTH."
 
 (defun canvas-mermaid--statement (draft statement)
   "Note in DRAFT the nodes and links of STATEMENT, (TEXT . POS), a
-flowchart's.  What cannot be read is an error."
+flowchart's; return the names of its nodes in the order they are
+written.  What cannot be read is an error."
   (pcase-let* ((`(,text . ,pos) statement)
-               (`(,froms . ,at) (canvas-mermaid--group draft text 0 pos)))
+               (`(,froms . ,at) (canvas-mermaid--group draft text 0 pos))
+               (names froms))
     (while (string-match-p "[^ \t]" (substring text at))
       (pcase-let* ((`(,label ,both ,invisible ,after)
                     (or (canvas-mermaid--link text at) (error "canvas-mermaid: cannot read «%s»" text)))
                    (`(,tos . ,end) (canvas-mermaid--group draft text after pos)))
         (unless invisible
           (canvas-mermaid--join draft froms tos label both (+ pos at)))
-        (setq froms tos at end)))))
+        (setq froms tos at end names (append names tos))))
+    names))
+
+;;;;; Subgraphs
+
+(cl-defstruct (canvas-mermaid--subgraphs (:constructor canvas-mermaid--subgraphs-create))
+  "The subgraphs of a flowchart as it is read: OPEN, those not closed yet,
+innermost first, each (ID TITLE NAME...), the names of the nodes written
+in it newest first; OPENED, every one opened, (ID . TITLE) each, newest
+first; HELD, the names of the nodes each holds, in the order written, by
+its id; and STYLES, the frame colours each is given, a plist of :stroke
+and :fill, by its id."
+  (open nil) (opened nil)
+  (held (make-hash-table :test #'equal)) (styles (make-hash-table :test #'equal)))
+
+(defun canvas-mermaid--subgraph-name (text)
+  "The id and the title of the subgraph TEXT names after the word
+subgraph, as (ID . TITLE): ID [TITLE], with or without the space, or a
+title alone, quoted or not, which is its id too.  No name is an error."
+  (when (or (null text) (string-empty-p (string-trim text)))
+    (error "canvas-mermaid: a subgraph with no name"))
+  (if (string-match "\\`\\([^][ \t\"]+\\)[ \t]*\\[\\(.*\\)\\]\\'" text)
+      (let ((id (match-string 1 text)) (title (match-string 2 text)))
+        (cons id (canvas-mermaid--clean title)))
+    (let ((name (canvas-mermaid--clean text)))
+      (cons name name))))
+
+(defun canvas-mermaid--open-subgraph (subgraphs text)
+  "Note in SUBGRAPHS the subgraph TEXT names, open from now on."
+  (pcase-let ((`(,id . ,title) (canvas-mermaid--subgraph-name text)))
+    (push (list id title) (canvas-mermaid--subgraphs-open subgraphs))
+    (push (cons id title) (canvas-mermaid--subgraphs-opened subgraphs))))
+
+(defun canvas-mermaid--held-anywhere-p (subgraphs name)
+  "Whether a subgraph of SUBGRAPHS closed so far holds the node NAME."
+  (cl-loop for names being the hash-values of (canvas-mermaid--subgraphs-held subgraphs)
+           thereis (member name names)))
+
+(defun canvas-mermaid--close-subgraph (subgraphs)
+  "Close the innermost open subgraph of SUBGRAPHS.  It holds the nodes
+written in it that no subgraph closed before it holds, as mermaid has
+it.  An end with no subgraph open is an error."
+  (pcase-let ((`(,id ,_ . ,names) (or (pop (canvas-mermaid--subgraphs-open subgraphs))
+                                      (error "canvas-mermaid: an end, but no subgraph is open"))))
+    (puthash id (cl-remove-if (lambda (name) (canvas-mermaid--held-anywhere-p subgraphs name))
+                              (delete-dups (reverse names)))
+             (canvas-mermaid--subgraphs-held subgraphs))))
+
+(defun canvas-mermaid--note-names (subgraphs names)
+  "Note in SUBGRAPHS that NAMES are written in the innermost open subgraph."
+  (when-let* ((innermost (car (canvas-mermaid--subgraphs-open subgraphs))))
+    (setcdr (cdr innermost) (append (reverse names) (cddr innermost)))))
+
+(defun canvas-mermaid--note-style (subgraphs id properties)
+  "Note in SUBGRAPHS the frame colours that PROPERTIES, the text of a
+style, give ID: its stroke and its fill, each over an earlier one."
+  (let ((style (gethash id (canvas-mermaid--subgraphs-styles subgraphs))))
+    (dolist (property (split-string properties "," t "[ \t]+"))
+      (pcase (split-string property ":" t "[ \t]+")
+        (`("stroke" ,value) (setq style (plist-put style :stroke value)))
+        (`("fill" ,value) (setq style (plist-put style :fill value)))))
+    (puthash id style (canvas-mermaid--subgraphs-styles subgraphs))))
+
+(defun canvas-mermaid--groups (subgraphs)
+  "The groups of SUBGRAPHS for a graph's spec, in the order they opened:
+\(ID :title TITLE [:stroke COLOUR] [:fill COLOUR] :nodes (NAME...)) each,
+a subgraph that holds no node left out.  A subgraph never closed is an
+error."
+  (when-let* ((open (car (canvas-mermaid--subgraphs-open subgraphs))))
+    (error "canvas-mermaid: the subgraph %s is never closed" (car open)))
+  (cl-loop for (id . title) in (reverse (canvas-mermaid--subgraphs-opened subgraphs))
+           for names = (gethash id (canvas-mermaid--subgraphs-held subgraphs))
+           for style = (gethash id (canvas-mermaid--subgraphs-styles subgraphs))
+           when names
+           collect (append (list id :title title)
+                           (and (plist-get style :stroke) (list :stroke (plist-get style :stroke)))
+                           (and (plist-get style :fill) (list :fill (plist-get style :fill)))
+                           (list :nodes names))))
+
+(defun canvas-mermaid--flowchart-statement (draft subgraphs statement)
+  "Note STATEMENT, (TEXT . POS), of a flowchart: its nodes and links in
+DRAFT, and in SUBGRAPHS the subgraph it opens, closes or styles, or the
+nodes it writes in one."
+  (let ((text (car statement)))
+    (cond ((string-match canvas-mermaid--subgraph-re text)
+           (canvas-mermaid--open-subgraph subgraphs (match-string 1 text)))
+          ((equal text "end") (canvas-mermaid--close-subgraph subgraphs))
+          ((string-match canvas-mermaid--style-re text)
+           (canvas-mermaid--note-style subgraphs (match-string 1 text) (match-string 2 text)))
+          ((string-match-p canvas-mermaid--skip-re text))
+          (t (canvas-mermaid--note-names subgraphs (canvas-mermaid--statement draft statement))))))
 
 (defun canvas-mermaid--after-header (header)
   "What follows the type and the direction on HEADER, a flowchart's first
@@ -443,13 +541,15 @@ line, as a line (TEXT . POS), or nil for nothing."
 
 (defun canvas-mermaid--flowchart (header lines name)
   "The spec of the flowchart called NAME: HEADER, its first line, perhaps
-with a statement after the type, and LINES, the rest."
-  (let ((draft (canvas-graph-draft-create)))
+with a statement after the type, and LINES, the rest.  Its subgraphs
+are the groups of the spec."
+  (let ((draft (canvas-graph-draft-create))
+        (subgraphs (canvas-mermaid--subgraphs-create)))
     (dolist (line (delq nil (cons (canvas-mermaid--after-header header) lines)))
       (dolist (statement (canvas-mermaid--statements line))
-        (unless (string-match-p canvas-mermaid--skip-re (car statement))
-          (canvas-mermaid--statement draft statement))))
-    (canvas-graph-draft-spec draft name)))
+        (canvas-mermaid--flowchart-statement draft subgraphs statement)))
+    (let ((groups (canvas-mermaid--groups subgraphs)))
+      (append (canvas-graph-draft-spec draft name) (and groups (list :groups groups))))))
 
 ;;;; State diagrams
 

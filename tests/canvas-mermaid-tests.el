@@ -168,6 +168,97 @@ flowchart TB
         (canvas-graph-show-labels 'auto))
     (should (eq (canvas-graph--labels graph) 'all))))
 
+(ert-deftest canvas-mermaid-a-subgraph-groups-the-nodes-written-in-it ()
+  ;; GIVEN a flowchart with subgraphs titled in brackets, after a space and
+  ;;       without one, a subgraph named by a word, one titled in quotes,
+  ;;       and nodes outside them
+  ;; WHEN it is read
+  ;; THEN each subgraph is a group of the nodes written inside it, in the
+  ;;      order the subgraphs open, titled by its brackets, its word or its
+  ;;      quotes, AND the spec builds
+  (let ((spec (cdr (canvas-mermaid-test--read "flowchart TD
+  start --> a1
+  subgraph kitchen [In the kitchen]
+    a1 --> a2
+  end
+  subgraph counter
+    b1
+  end
+  subgraph \"Front of house\"
+    c1
+  end
+  subgraph garden[\"Back garden\"]
+    d1
+  end
+  a2 --> b1 --> c1 --> d1 --> outside
+"))))
+    (should (equal (plist-get spec :groups)
+                   '(("kitchen" :title "In the kitchen" :nodes ("a1" "a2"))
+                     ("counter" :title "counter" :nodes ("b1"))
+                     ("Front of house" :title "Front of house" :nodes ("c1"))
+                     ("garden" :title "Back garden" :nodes ("d1")))))
+    (should (canvas-graph-build spec))))
+
+(ert-deftest canvas-mermaid-a-node-is-in-the-first-subgraph-that-closes-round-it ()
+  ;; GIVEN a subgraph inside another, a node written in two subgraphs one
+  ;;       after the other, and a subgraph with no node
+  ;; WHEN it is read
+  ;; THEN a node of the inner subgraph, which closes first, is in the inner
+  ;;      group, the outer group holds the rest of its nodes, the node in
+  ;;      two subgraphs is in the first, as mermaid has it, AND the subgraph
+  ;;      with no node is no group
+  (let ((spec (cdr (canvas-mermaid-test--read "flowchart TD
+  subgraph outer
+    x
+    subgraph inner
+      y
+    end
+    z
+  end
+  subgraph one
+    p
+  end
+  subgraph two
+    p --> q
+  end
+  subgraph empty
+  end
+"))))
+    (should (equal (plist-get spec :groups)
+                   '(("outer" :title "outer" :nodes ("x" "z"))
+                     ("inner" :title "inner" :nodes ("y"))
+                     ("one" :title "one" :nodes ("p"))
+                     ("two" :title "two" :nodes ("q")))))))
+
+(ert-deftest canvas-mermaid-a-style-colours-the-frame-of-a-subgraph ()
+  ;; GIVEN styles of a subgraph written before it and after it, and a style
+  ;;       of a node
+  ;; WHEN it is read
+  ;; THEN the group of the subgraph is framed in the colour of the stroke
+  ;;      on the background of the fill, a later style winning, AND the
+  ;;      style of the node changes nothing
+  (let ((spec (cdr (canvas-mermaid-test--read "flowchart TD
+  style kitchen fill:#eee
+  subgraph kitchen [Kitchen]
+    a --> b
+  end
+  style kitchen stroke:#c60,fill:#fde,stroke-width:2px
+  style a fill:#f00
+"))))
+    (should (equal (plist-get spec :groups)
+                   '(("kitchen" :title "Kitchen" :stroke "#c60" :fill "#fde" :nodes ("a" "b")))))
+    (should (equal (canvas-mermaid-test--labels spec) '(("a" . "a") ("b" . "b"))))))
+
+(ert-deftest canvas-mermaid-a-subgraph-it-cannot-close-is-an-error ()
+  ;; GIVEN a subgraph never closed, an end with no subgraph open, and a
+  ;;       subgraph with no name
+  ;; WHEN each is read
+  ;; THEN each is an error that says what is wrong
+  (let ((message-of (lambda (text) (error-message-string (should-error (canvas-mermaid-test--read text))))))
+    (should (string-search "kitchen is never closed" (funcall message-of "flowchart TD\n  subgraph kitchen\n    a\n")))
+    (should (string-search "no subgraph is open" (funcall message-of "flowchart TD\n  a\n  end\n")))
+    (should (string-search "subgraph with no name" (funcall message-of "flowchart TD\n  subgraph\n  end\n")))))
+
 ;;;; State diagrams
 
 (ert-deftest canvas-mermaid-state-diagram-starts-ends-and-labels ()

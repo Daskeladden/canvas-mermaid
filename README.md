@@ -13,14 +13,17 @@ This is a prototype.
 
 - `flowchart` and `graph`: nodes in every shape, links in every style,
   labels by pipe (`-->|yes|`) and inline (`-- yes -->`), chains
-  (`A --> B --> C`) and fans (`A & B --> C`).
+  (`A --> B --> C`) and fans (`A & B --> C`). A subgraph, from
+  `subgraph kitchen [In the kitchen]` to `end`, draws as a frame round its nodes.
+  `style kitchen stroke:#c60,fill:#fde` gives the frame its color and its
+  background.
 - `stateDiagram` and `stateDiagram-v2`: `[*]` as the start and the end,
   `state "Long name" as S`, labelled transitions, and composite states.
 - `mindmap`: the tree by indentation, node shapes, and icons of the
   material set (`::icon(mdi mdi-book)`).
 
 The front matter title names the diagram. Comments, directives, classes,
-styles, clicks and notes draw nothing.
+the styles of nodes and links, clicks and notes draw nothing.
 
 Some parts of mermaid have no equivalent on the canvas:
 
@@ -29,8 +32,13 @@ Some parts of mermaid have no equivalent on the canvas:
 - The layout always runs top down, so `LR` and the other directions have
   no effect.
 - A link without an arrowhead (`---`) still gets one.
-- Subgraphs and composite states become flat. A composite state leads to
-  the state it starts at.
+- Composite states become flat. A composite state leads to the state it
+  starts at.
+- A subgraph in another subgraph gets a frame of its own, next to the
+  frame of the outer one and not in it. A node is in the first subgraph
+  that closes round it, as in mermaid.
+- Other rows of the layout can come between the nodes of a subgraph.
+  Then each part of the subgraph gets a frame.
 
 A sequence diagram, a class diagram, a gantt chart or another type
 without a layout gives a clear error, and canvas-mermaid draws nothing
