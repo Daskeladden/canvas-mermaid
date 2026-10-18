@@ -75,7 +75,8 @@ Then put the four directories on the load path:
   :load-path ("/path/to/canvas-diagram" "/path/to/canvas-graph"
               "/path/to/canvas-mindmap" "/path/to/canvas-mermaid")
   :commands (canvas-mermaid-show canvas-mermaid-show-file
-             canvas-mermaid-export canvas-mermaid-demo))
+             canvas-mermaid-export canvas-mermaid-export-text
+             canvas-mermaid-demo))
 ```
 
 ## Use
@@ -98,6 +99,9 @@ emacs -Q --batch -L /path/to/canvas-diagram -L /path/to/canvas-graph \
   -L /path/to/canvas-mindmap -L /path/to/canvas-mermaid -l canvas-mermaid \
   --eval '(canvas-mermaid-export "flow.mmd" "flow.png")'
 ```
+
+`canvas-mermaid-export-text` does the same for the text of one diagram,
+such as a mermaid block that a program found in a buffer.
 
 The keys in the drawing are the keys of canvas-graph or canvas-mindmap.
 

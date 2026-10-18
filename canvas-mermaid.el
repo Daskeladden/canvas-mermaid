@@ -706,6 +706,14 @@ org file with mermaid blocks.  No buffer or frame is needed, so this
 works in batch."
   (canvas-diagram-reader-export canvas-mermaid-reader file out))
 
+;;;###autoload
+(defun canvas-mermaid-export-text (text out)
+  "Draw TEXT, one mermaid diagram, into OUT, a PNG, an SVG or a PDF by its
+name, and return OUT.  A TEXT that canvas-mermaid cannot read signals an
+error whose message names canvas-mermaid.  No buffer or frame is needed,
+so this works in batch."
+  (canvas-diagram-reader-export-text canvas-mermaid-reader text out))
+
 ;;;; Demo
 
 (defconst canvas-mermaid--demo

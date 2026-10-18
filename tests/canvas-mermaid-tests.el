@@ -579,6 +579,23 @@ flowchart TB
           (should-error (canvas-mermaid-export empty png) :type 'user-error))
       (dolist (f (list png mmd md empty)) (when (file-exists-p f) (delete-file f))))))
 
+(ert-deftest canvas-mermaid-export-text-writes-a-png ()
+  ;; GIVEN the text of a flowchart, and the text of a flowchart with a
+  ;;       subgraph that has no name
+  ;; WHEN each is exported from its text
+  ;; THEN the first writes a PNG of some size, AND the second signals the
+  ;;      message of the reader
+  (let ((png (make-temp-file "canvas-mermaid-test" nil ".png"))
+        (canvas-diagram-font "Sans 12px"))
+    (unwind-protect
+        (progn
+          (should (equal (canvas-mermaid-export-text "flowchart TD\n  A[Start] --> B[Done]\n" png) png))
+          (should (canvas-mermaid-test--png-p png))
+          (should (> (file-attribute-size (file-attributes png)) 500))
+          (should (equal (cadr (should-error (canvas-mermaid-export-text "flowchart TD\n  subgraph\n  end\n" png)))
+                         "canvas-mermaid: a subgraph with no name")))
+      (delete-file png))))
+
 ;;;; The package
 
 (defun canvas-mermaid-test--library ()
